@@ -36,6 +36,8 @@ return [
     ],
 
     'firebase' => [
+        'cache_key' => 'firebase_cloud_messing_'.env('FIREBASE_PROJECT_ID'),
+        'ttl' => 3600,
         'credentials' => [
             'type' => env('FIREBASE_TYPE'),
             'project_id' => env('FIREBASE_PROJECT_ID'),
