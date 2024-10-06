@@ -1,115 +1,60 @@
 <?php
 
 namespace App\Services;
-
-use Firebase\JWT\JWT;
-use Illuminate\Http\Client\Pool;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
+use Kreait\Firebase\Contract\Messaging;
+use Kreait\Firebase\Messaging\CloudMessage;
+use Kreait\Firebase\Exception\Messaging as MessagingErrors;
+use Kreait\Firebase\Exception\MessagingException;
 
 class CloudMessagingService
 {
-    /**
-     * Get Google Oauth2 access token.
-     *
-     * @throws \RuntimeException
-     */
-    private function getAccessToken(): string
+    public function __construct(private Messaging $messaging)
     {
-        $privateKey = config(key: 'firebase.credentials.private_key');
-        $ttl = config('firebase.ttl', 3600);
-        $now = now();
-        $payload = [
-            'iss' => config('firebase.credentials.client_email'),
-            'scope' => 'https://www.googleapis.com/auth/firebase.messaging',
-            'aud' => 'https://oauth2.googleapis.com/token',
-            'exp' => $now->addSeconds($ttl)->timestamp,
-            'iat' => $now->timestamp,
-        ];
 
-        $jwt = JWT::encode($payload, $privateKey, 'RS256');
-
-        $response = Http::asJson()->post('https://oauth2.googleapis.com/token', [
-            'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-            'assertion' => $jwt,
-        ]);
-
-        if ($response->failed()) {
-            throw new \RuntimeException('[Google Oauth2]: Error when exchange access token.');
-        }
-
-        return $response->json('access_token');
     }
 
-    /**
-     * Get Google Oauth2 access token from cache storage.
-     *
-     * @throws \RuntimeException
-     */
-    private function getAccessTokenFromCache(): string
+    public function sendToTopic($topic)
     {
-        $cacheKey = config('firebase.cache_key');
-
-        $ttl = config('firebase.ttl', 3600);
-
-        return Cache::remember($cacheKey, $ttl, function () {
-            return $this->getAccessToken();
-        });
-    }
-
-    public function send(array $message)
-    {
-        $accessToken = $this->getAccessTokenFromCache();
-
-        $projectId = config('firebase.credentials.project_id');
-
-        $response = Http::asJson()
-            ->withHeaders([
-                'Authorization' => "Bearer $accessToken",
+        $message = CloudMessage::withTarget('topic', $topic)
+            ->withNotification([
+                'title' => 'Test',
+                'body' => 'Test',
             ])
-            ->post(
-                "https://fcm.googleapis.com/v1/projects/$projectId/messages:send",
-                [
-                    'message' => $message,
-                ]
-            );
+            ->withData([
+                'id' => '1000',
+            ]);
 
-        return [
-            'outcome' => $response->successful() ? 'SUCCESS' : 'FAIL',
-            'response' => $response->json(),
-        ];
-    }
+        try {
+            $result = $this->messaging->send($message);
+            // $result = ['name' => 'projects/<project-id>/messages/6810356097230477954']
 
-    public function sendAll(array $messages)
-    {
-        $accessToken = $this->getAccessTokenFromCache();
-
-        $projectId = config('firebase.credentials.project_id');
-
-        $responses = Http::pool(
-            fn (Pool $pool) => collect($messages)->map(
-                fn ($message) => $pool->asJson()
-                    ->withHeaders([
-                        'Authorization' => "Bearer $accessToken",
-                    ])
-                    ->post(
-                        "https://fcm.googleapis.com/v1/projects/$projectId/messages:send",
-                        [
-                            'message' => $message,
-                        ]
-                    )
-            )
-        );
-
-        $results = [];
-
-        foreach ($responses as $response) {
-            $results[] = [
-                'outcome' => $response->successful() ? 'SUCCESS' : 'FAIL',
-                'response' => $response->json(),
-            ];
+            return $result;
+        } catch (MessagingException $e) {
+            logger()->error(get_called_class(), [$e]);
         }
 
-        return $results;
+        try {
+            $this->messaging->send($message);
+        } catch (MessagingErrors\NotFound $e) {
+            echo 'The target device could not be found.';
+        } catch (MessagingErrors\InvalidMessage $e) {
+            echo 'The given message is malformatted.';
+        } catch (MessagingErrors\ServerUnavailable $e) {
+            $retryAfter = $e->retryAfter();
+
+            echo 'The FCM servers are currently unavailable. Retrying at ' . $retryAfter->format(\DATE_ATOM);
+
+            // This is just an example. Using `sleep()` will block your script execution, don't do this.
+            while ($retryAfter <= new \DateTimeImmutable()) {
+                sleep(1);
+            }
+
+            $this->messaging->send($message);
+        } catch (MessagingErrors\ServerError $e) {
+            echo 'The FCM servers are down.';
+        } catch (MessagingException $e) {
+            // Fallback handling
+            echo 'Unable to send message: ' . $e->getMessage();
+        }
     }
 }
