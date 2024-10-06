@@ -7,7 +7,7 @@ use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
-class CloudMessaging
+class CloudMessagingService
 {
     /**
      * Get Google Oauth2 access token.
@@ -16,11 +16,11 @@ class CloudMessaging
      */
     private function getAccessToken(): string
     {
-        $privateKey = config(key: 'services.firebase.credentials.private_key');
-        $ttl = config('services.firebase.ttl', 3600);
+        $privateKey = config(key: 'firebase.credentials.private_key');
+        $ttl = config('firebase.ttl', 3600);
         $now = now();
         $payload = [
-            'iss' => config('services.firebase.credentials.client_email'),
+            'iss' => config('firebase.credentials.client_email'),
             'scope' => 'https://www.googleapis.com/auth/firebase.messaging',
             'aud' => 'https://oauth2.googleapis.com/token',
             'exp' => $now->addSeconds($ttl)->timestamp,
@@ -48,9 +48,9 @@ class CloudMessaging
      */
     private function getAccessTokenFromCache(): string
     {
-        $cacheKey = config('services.firebase.cache_key');
+        $cacheKey = config('firebase.cache_key');
 
-        $ttl = config('services.firebase.ttl', 3600);
+        $ttl = config('firebase.ttl', 3600);
 
         return Cache::remember($cacheKey, $ttl, function () {
             return $this->getAccessToken();
@@ -61,7 +61,7 @@ class CloudMessaging
     {
         $accessToken = $this->getAccessTokenFromCache();
 
-        $projectId = config('services.firebase.credentials.project_id');
+        $projectId = config('firebase.credentials.project_id');
 
         $response = Http::asJson()
             ->withHeaders([
@@ -84,7 +84,7 @@ class CloudMessaging
     {
         $accessToken = $this->getAccessTokenFromCache();
 
-        $projectId = config('services.firebase.credentials.project_id');
+        $projectId = config('firebase.credentials.project_id');
 
         $responses = Http::pool(
             fn (Pool $pool) => collect($messages)->map(
